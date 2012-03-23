@@ -1,0 +1,2 @@
+L4 is a language that encodes the static semantics JavaScript programs in JSON syntax. The L4 compiler
+translates these files into Circos source files.
