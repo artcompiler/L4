@@ -153,7 +153,7 @@ function cg(tree: PROGRAM) {
     let chr_name = tree.file + "_catchall";
     ke.chr_name = chr_name = chr_name.substring(chr_name.lastIndexOf('/')+1);
     ke.log("chr - " + chr_name + " " + chr_name + " 0 " + ke.unrefCount() + " " +  "red");
-    return [e.finalize(), ke.finalize(tree.file)];
+    return e.finalize();
 }
 
 /* Support for "eval".  Compile 'tree' to a special script.

@@ -1,0 +1,899 @@
+/* -*- Mode: javascript; indent-tabs-mode: nil; tab-width: 4 -*- */
+/* vi: set ts=4 sw=4 expandtab: (add to ~/.vimrc: set modeline modelines=5) */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is [Open Source Virtual Machine.].
+ *
+ * The Initial Developer of the Original Code is
+ * Adobe System Incorporated.
+ * Portions created by the Initial Developer are Copyright (C) 2004-2006
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Adobe AS3 Team
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+
+
+public function eval(...args)
+    ESC::evaluateInScopeArray(args, [], "");
+
+
+// load asm
+{
+    use namespace "avmplus";
+    use namespace "flash.utils";
+
+    var fname = System.argv[0];
+    if (fname==undefined) throw "no file name given";
+    var fname = System.argv[0];
+    var str = "var src = " + File.read (fname);
+}
+
+// parse json to object
+
+{
+    use namespace "avmplus";
+    use namespace Parse;
+    use namespace Gen;
+    //print ("parsing");
+    var top = [];
+    var parser = new Parser(str,top);
+    var nd = parser.program();
+    var bytes = cg(nd).getBytes();
+    Util::loadBytes(bytes);
+}
+
+// decode it
+
+function getOffsetOfDefInBody(body, name) {
+    for (var i=0; i<body.blocks[0].defs.length; i++) {
+        //print("getOffsetOfDefInBody() name="+name+"="+ body.blocks[0].defs[i].name);
+        if (body.blocks[0].defs[i].name == name) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+
+function stripPunc(str) {
+    return str.replace(/[_]/g, "-").replace(/ /g, "").replace(/[#.()]/g, "");
+}
+
+function genName({m, c, p, e, b, r, d, u}) {
+    let name = ""
+    // module
+    if (m) {
+        name += "M" + m
+    }
+    // closure
+    if (c) {
+        name += "C" + c
+    }
+    // prop
+    if (p) {
+        name += "P" + p
+    }
+    // expression
+    if (e) {
+        name += "E" + e
+    }
+    // block
+    if (b) {
+        name += "B" + b
+    }
+    // reference
+    if (r) {
+        name += "R" + r
+    }
+    // def
+    if (d) {
+        name += "D" + d
+    }
+    // use
+    if (u) {
+        name += "U" + u
+    }
+
+    return pushName(name)
+}
+
+var moduleNum = 0
+function genModuleName() {
+    moduleNum++
+    return genName({m: moduleNum})
+}
+
+var closureNum = 0
+function genClosureName() {
+    closureNum++
+    return genName({c: closureNum})
+}
+
+var propNum = 0
+function genPropName() {
+    propNum++
+    return genName({p: propNum})
+}
+
+var exprNum = 0
+function genExprName() {
+    exprNum++
+    return genName({e: exprNum})
+}
+
+var blockNum = 0
+function genBlockName() {
+    blockNum++
+    return genName({b: blockNum})
+}
+
+var refNum = 0
+function genRefName() {
+    refNum++
+    return genName({r: refNum})
+}
+
+var defNum = 0
+function genDefName() {
+    defNum++
+    return genName({d: defNum})
+}
+
+var useNum = 0
+function genUseName() {
+    useNum++
+    return genName({u: useNum})
+}
+
+var nameStack = [ ]
+function pushName(str) {
+    if (!(str is String)) {
+        throw str
+    }
+    print("pushName() " + nameStack.join("") + " " + str)
+    nameStack.push(str)
+    return str //nameStack.join("")
+}
+
+function popName() {
+    let str = String(nameStack)
+    nameStack.pop()
+    return str
+}
+
+
+{
+    genModuleName()
+
+    var karyotypeStr = "";
+    var configStr = "";
+    var labelStr = "";
+    var kname = fname.substring(fname.lastIndexOf("/")+1);
+    var count = 0
+    var sharedLabelStr = ""
+    var closureMap = { }
+    for each (var obj in src.objs) {
+        obj.id = genClosureName()
+        count += obj.defs.length;
+        var chrName = obj.id //stripPunc(obj.name)
+        var alias = obj.alias;
+        var env = {
+            kname: kname,
+            name: chrName,
+            refName: alias,
+            offset: 0
+        }
+        sharedLabelStr = emitLabel(env, sharedLabelStr)
+        print("objs chrName="+chrName+" alias="+alias)
+        closureMap[chrName] = obj
+        popName()  // expr name
+    }
+    for each (var body in src.bods) {
+        body.id = genClosureName()
+        count += body.blocks[0].refs.length;
+        var chrName = body.id //stripPunc(body.name)
+        var alias = body.alias;
+        var env = {
+            kname: kname,
+            name: chrName,
+            refName: alias,
+            offset: 0
+        }
+        //sharedLabelStr = emitLabel(env, sharedLabelStr)
+        closureMap[chrName] = obj
+        popName()  // expr name
+        print("bods chrName="+chrName+" alias="+alias)
+    }
+    popName() // module name
+
+    var linkStr = ""
+    var nodesStr = ""
+    for each (var obj in src.objs) {
+        configStr = "";
+        detailedConfigStr = "";
+        linkStr = "";
+
+        var chrName = obj.id //stripPunc(obj.name)
+        var chrSize = obj.defs.length;
+
+        pushName(obj.id)
+
+        nodesStr += emitNodes({name: chrName, tokens: obj.tokens});
+
+        var outerName = stripPunc(obj.outer)
+        var outerBody = bodyMap[outerName]
+        var outerSize = 0
+        if (outerBody) {
+            var outerSize = outerBody.blocks[0].defs.length + outerBody.blocks[0].refs.length
+        }
+
+        /*
+        while (outerName != "null") {
+            //linkStr += emitLink(env);
+            var name = stripPunc(outerName)
+            var nextbody = bodyMap[name]
+            print("nextbody="+nextbody)
+            print("nextbody.blocks[0]="+nextbody.blocks[0])
+            var defCount = nextbody.blocks[0].defs != void 0 ? nextbody.blocks[0].defs.length : 0;
+            var refCount = nextbody.blocks[0].refs != void 0 ? nextbody.blocks[0].refs.length : 0;
+            var size = defCount + refCount;
+            var outerName = stripPunc(nextbody.outer)
+            var outerBody = bodyMap[outerName]
+            if (!outerBody) break
+            var outerSize = outerBody.blocks[0].defs.length + outerBody.blocks[0].refs.length
+            env.name = name
+            env.size = size
+            env.outerName = outerName
+            env.outerSize = outerSize
+        }
+        */
+        var offset = 1;
+        var labelStr = sharedLabelStr;
+        var others = []
+
+        for each (var def in obj.defs) {
+
+            var defName = genPropName()
+
+            var outerName = stripPunc(def.val)
+            var outerSize = 0;
+            if (bodyMap[outerName]) {
+                var outerBody = bodyMap[outerName]
+                outerSize = outerBody.blocks[0].refs.length + outerBody.blocks[0].defs.length
+                others.push(outerName);
+            }
+            else if (objMap[outerName]) {
+                outerSize = objMap[outerName].defs.length
+                others.push(outerName);
+            }
+
+            //var defName = chrName + "-" + stripPunc(def.name)
+            var env = {
+                name: defName,
+                offset: 50000,    // for label
+                size: 100000,
+                refName: def.name,
+                label: def.name,
+                outerName: outerName,
+                outerOffset: 0,
+                outerSize: outerSize
+            }
+
+            karyotypeStr += emitChr(env)
+            nodesStr += emitNodes({name: defName, tokens: def.tokens});
+            labelStr = emitLabel(env, labelStr);
+            
+            //var env = {
+            //    name: chrName,
+            //    offset: offset,
+            //    size: 0,
+            //    refName: def.name,
+            //    outerName: outerName,
+            //    outerOffset: 0,
+            //    outerSize: outerSize
+            //}
+
+            //labelStr = emitLabel(env, labelStr);
+            //linkStr += emitLink(env)
+            //labelStr = emitLabel({name: outerName, offset: 0, refName: outerName}, labelStr);   // target ideogram name
+            offset++;
+
+            popName()  // slot
+        }
+
+        var env = {
+            kname: kname,
+            name: chrName,
+            label: obj.name,
+            offset: 0,
+            scale: 2,
+            size: (chrSize?chrSize:chrSize+1)*100000,
+            objs: objMap
+        }
+
+        karyotypeStr += emitChr(env)
+        configStr += emitConfig(env)
+        detailedConfigStr += emitDetailedConfig(env)
+
+        Util::writeStringToFile(linkStr,fname+"."+chrName+".links");
+        Util::writeStringToFile(labelStr,fname+"."+chrName+".labels");
+        Util::writeStringToFile(configStr,fname+"."+chrName+".conf");
+        Util::writeStringToFile(detailedConfigStr,fname+"."+chrName+"-detail.conf");
+
+        popName() // expr
+    }
+
+    for each (var body in src.bods) {
+
+        pushName(body.id)
+        var chrName = genBlockName() // for now only one block per body
+
+        detailedConfigStr = "";
+        configStr = "";
+        linkStr = "";
+
+        //var chrName = stripPunc(body.name)
+        var outerName = stripPunc(body.outer)
+        var chrSize = body.blocks[0].defs.length + body.blocks[0].refs.length;
+        var outerBody = bodyMap[outerName]
+        var outerSize = 0
+        if (outerBody) {
+            var outerSize = outerBody.blocks[0].defs.length + outerBody.blocks[0].refs.length
+        }
+
+        nodesStr += emitNodes({name: chrName, tokens: body.tokens});
+        
+/*
+        var env = {
+            kname: kname,
+            name: chrName,
+            refName: body.alias,
+            offset: 0,
+            size: chrSize?chrSize:chrSize+1,
+            scale: 10,
+            outerName: outerName,
+            outerOffset: 0,
+            outerSize: outerSize
+        }
+
+
+        while (outerName != "null") {
+            //linkStr += emitLink(env);
+            var name = stripPunc(outerName)
+            var nextbody = bodyMap[name]
+            var size = nextbody.blocks[0].defs.length + nextbody.blocks[0].refs.length
+            var outerName = stripPunc(nextbody.outer)
+            var outerBody = bodyMap[outerName]
+            if (!outerBody) break
+            var outerSize = outerBody.blocks[0].defs.length + outerBody.blocks[0].refs.length
+            env.name = name
+            env.size = size
+            env.outerName = outerName
+            env.outerSize = outerSize
+        }
+*/
+
+        var offset = 1;
+        var labelStr = sharedLabelStr;
+        for each (var def in body.blocks[0].defs) {
+
+            var defName = genPropName()
+
+            //var defName = chrName + "-" + stripPunc(def.name)
+            var env = {
+                name: defName,
+                offset: 50000,    // for label
+                size: 100000,
+                refName: def.name,
+                label: def.name,
+                outerName: outerName,
+                outerOffset: 0,
+                outerSize: outerSize
+            }
+
+            karyotypeStr += emitChr(env)
+            nodesStr += emitNodes({name: defName, tokens: def.tokens});
+            labelStr = emitLabel(env, labelStr);
+            
+            offset++;
+            popName()  // prop name
+        }
+
+        for each (var ref in body.blocks[0].refs) {
+
+            var refName = genRefName()
+
+            //var refName = chrName + "-" + stripPunc(ref.name)
+            var env = {
+                name: refName,
+                offset: 50000,    // for label
+                size: 100000,
+                refName: ref.name,
+                label: ref.name,
+                outerName: outerName,
+                outerOffset: 0,
+                outerSize: outerSize
+            }
+
+            //if (karyotypeStr.indexOf(refName) < 0) {
+                karyotypeStr += emitChr(env)
+                nodesStr += emitNodes({name: refName, tokens: ref.tokens});
+                labelStr = emitLabel(env, labelStr);
+            //}
+            
+            offset++;
+            popName()  // ref name
+        }
+
+        // emit label and link to def
+        var others = []
+        for each (var ref in body.blocks[0].refs) {
+            var outerName = stripPunc(ref.base)
+            var outerBody = bodyMap[outerName]
+            var outerOffset = 0;
+            var outerSize = 0;
+            if (outerBody) {
+                outerOffset = getOffsetOfDefInBody(outerBody, ref.name)
+                outerSize = outerBody.blocks[0].defs.length + outerBody.blocks[0].refs.length
+                others.push(outerName);
+            }
+
+            var env = {
+                name: chrName,
+                offset: offset,
+                refName: ref.name,
+                size: 0,
+                outerName: outerName,
+                outerOffset: outerOffset,
+                outerSize: 0
+            };
+
+            // only do interprocedural links
+            if (chrName != outerName) {
+                linkStr += emitLink(env);
+                labelStr = emitLabel({name: outerName, offset: 0, refName: outerName}, labelStr);   // target ideogram name
+                labelStr = emitLabel(env, labelStr);
+            }
+            //print("ref.tokens="+ref.tokens+" ref.tokens.length="+ref.tokens.length)
+            nodesStr += emitNodes({tokens: ref.tokens})
+            offset++;
+
+        }
+
+        var env = {
+            kname: kname,
+            name: chrName,
+            refName: body.alias,
+            offset: 0,
+            size: chrSize?chrSize:chrSize+1,
+            scale: 2,
+            others: others
+        }
+
+        //labelStr = emitLabel(env, labelStr)
+        karyotypeStr += emitChr(env);
+        //configStr += emitConfig(env);
+        //detailedConfigStr += emitDetailedConfig(env);
+
+
+        //Util::writeStringToFile(linkStr,fname+"."+chrName+".links");
+        //Util::writeStringToFile(labelStr,fname+"."+chrName+".labels");
+        //Util::writeStringToFile(configStr,fname+"."+chrName+".conf");
+        //Util::writeStringToFile(detailedConfigStr,fname+"."+chrName+"-detail.conf");
+
+        popName() // block
+        popName() // expr
+
+    }
+
+    Util::writeStringToFile(karyotypeStr,fname+".karyotype");
+    Util::writeStringToFile(nodesStr,fname+".nodes");
+}
+
+function emitNodes({name, tokens}, str) {
+    if (!str) {
+        str = "";
+    }
+
+    if (name) {
+        str += "\n" + name + " "
+    }
+ 
+    if (tokens) {
+        for each (let t in tokens) {
+            str += t + ","
+        }
+    }
+    return str
+}
+
+//segdup00010 hs1 71096 76975
+//segdup00010 hs6 170824311 170830148
+function emitLink({name, offset, size, outerName, outerOffset, outerSize}) {
+    //print("emitLink() name="+name+" offset="+offset+" outerName="+outerName+ " outerOffset="+outerOffset+" outerSize="+outerSize);
+    return name + "_" + offset + " " + name + " " + offset + " " + (offset+size) + "\n" +
+        name + "_" + offset + " " + outerName + " " + outerOffset + " " + (outerOffset+outerSize) + "\n";
+}
+
+function emitChr({name, label, size}) {
+    return "chr - " + name + " " + label + " 0 " + size + " gpos25\n";
+}
+
+function emitLabel({name, offset, refName}, out) {
+    var label = refName.replace(/ /g, "__");
+    var str = name + " " + offset + " " + offset + " " + label + "\n";
+    if (out.indexOf(str) < 0) {
+        out += str
+    }
+    return out
+}
+
+// Emit a Circos conf file for each body
+function emitConfig({kname, name, scale, objs}) {
+    var chrs = ""
+    var radius = ""
+    var color = ""
+
+    for (obj in objs) {
+        if (chrs.length > 0) {
+            chrs += ";"
+        }
+        chrs += obj
+    }
+
+
+    return "karyotype = ../" + kname + ".karyotype"
+        + "\nchromosomes_units = 100000"
+//        + "\nchromosomes_display_default = yes"
+//        + "\nchromosomes_scale = "+ name + ":" + scale
+        + "\nchromosomes = " + chrs
+        + "\nchromosomes_color = /obj/=orange;"+name+"=blue"
+        + "\n<<include ../" + kname + ".ideogram.conf>>"
+        + "\n<<include ../" + kname + ".ticks.conf>>"
+        + "\n<plots>"
+        + "\n<plot>"
+        + "\ntype = text"
+        + "\ncolor = black"
+        + "\nfile = ../" + kname + "." + name + ".labels"
+        + "\nr0 = 1r+10p"
+        + "\nr1 = 1r+200p"
+        + "\nshow_links     = no"
+//        + "\nlink_dims      = 4p,4p,8p,4p,4p"
+//        + "\nlink_thickness = 1p"
+//        + "\nlink_color     = grey"
+        + "\nlabel_size   = 0p"
+        + "\nlabel_font   = condensed"
+        + "\npadding  = 0p"
+        + "\nrpadding = 0p"
+        + "\n</plot>"
+        + "\n</plots>"
+        + "\n<image>"
+        + "\nfile  = ../" + kname + "." + name + ".svg"
+        + "\n<<include ../image.conf>>"
+        + "\n</image>"
+        + "\n<<include ../housekeeping.conf>>"
+        + "\n<links>"
+        + "\nz = 0"
+        + "\nradius = 0.95r"
+        + "\nbezier_radius = 0r"
+        + "\nbezier_radius_purity = 1"
+        + "\n<link scope"+name+">"
+        + "\nshow = yes"
+        + "\ncolor = ribboncolor"
+        + "\nstroke_thickness = 2"
+        + "\nstroke_color = blue"
+        + "\nfile  = ../" + kname + "." + name + ".links"
+        + "\nribbon = yes"
+        + "\nflat = yes"
+        + "\n</link>"
+        + "\n</links>"
+}
+
+// Emit a Circos conf file for each body detail
+function emitDetailedConfig({kname, name, scale, offset, size, objs}) {
+
+    // show details of the current chr and hide details of the other chrs
+
+    var chrs = ""
+
+    var detailedRadius = ""
+    var detailedColor = ""
+    var detailedZoom = ""
+    var detailedLabel = ""
+    var chrName = name
+
+    //print("emitDetailedConfig() chrName="+chrName+" detailedChr="+detailedChr)
+
+    for (obj in objs) {
+        if (obj != chrName) {
+            if (chrs.length > 0) {
+                chrs += ";"
+            }
+            chrs += obj
+        }
+        else if (objs[obj].defs.length === 0) {
+
+            var bod = bodyMap[chrName];
+
+
+/*
+            // here is the case where there is no detail so we highlight the node as is
+            if (chrs.length > 0) {
+                    chrs += ";"
+            }
+            if (detailedRadius.length > 0) {
+                detailedRadius += ";"
+                detailedColor += ";"
+            }
+            var detailedChr = chrName
+            chrs += detailedChr
+            detailedRadius += detailedChr + ":0.97r"
+            detailedColor += detailedChr + "=green"
+            
+            detailedZoom += "\n <zoom>"
+            detailedZoom += "\n chr = " + detailedChr
+            detailedZoom += "\n start = " + offset + "u"
+            detailedZoom += "\n end   = " + (offset+size-1) + "u"
+            detailedZoom += "\n scale = " + scale
+            detailedZoom += "\n </zoom>"
+
+            detailedLabel += "\n <rule>"
+            detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+            detailedLabel += "\n label_size = 14p"
+            detailedLabel += "\n label_color = grey"
+            detailedLabel += "\n link_color = white"
+            detailedLabel += "\n </rule>"
+*/
+
+/*
+            // include detailed chrs
+            print("chrName="+chrName+" bod="+bod)
+            for each (var def in bod.blocks[0].defs) {  // FIXME do refs too
+                offset = 0
+                size = 100000
+                if (chrs.length > 0) {
+                    chrs += ";"
+                }
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                    detailedColor += ";"
+                }
+                var detailedChr = chrName + "-" + stripPunc(def.name)
+                chrs += detailedChr
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=green"
+
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = " + offset + "u"
+                detailedZoom += "\n end   = " + (offset+size-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+
+                detailedChr = detailedChr.replace("$", "\\\\$")
+
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+                detailedLabel += "\n label_size = 14p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+
+
+            }
+
+            for each (var ref in bod.blocks[0].refs) {  // FIXME do refs too
+                offset = 0
+                size = 100000
+                if (chrs.length > 0) {
+                    chrs += ";"
+                }
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                    detailedColor += ";"
+                }
+                var detailedChr = chrName + "-" + stripPunc(ref.name)
+                chrs += detailedChr
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=green"
+
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = " + offset + "u"
+                detailedZoom += "\n end   = " + (offset+size-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+
+                detailedChr = detailedChr.replace("$", "\\\\$")
+
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+                detailedLabel += "\n label_size = 14p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+
+                print("emitDetailedConfig() chrName="+chrName+" detailedChr="+detailedChr)
+
+            }
+*/
+
+        }
+        else {
+
+            // include detailed chrs
+            for each (var def in objs[obj].defs.reverse()) {  
+                if (chrs.length > 0) {
+                    chrs += ";"
+                }
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                    detailedColor += ";"
+                }
+                var detailedChr = chrName + "-" + stripPunc(def.name)
+                chrs += detailedChr
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=green"
+
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = " + offset + "u"
+                detailedZoom += "\n end   = " + (offset+size-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+
+                detailedChr = detailedChr.replace("$", "\\\\$")
+
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+                detailedLabel += "\n label_size = 14p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+            }
+
+        }
+    }
+    //print("emitDetailedConfig() chrs="+chrs)
+    return "karyotype = ../" + kname + ".karyotype"
+        + "\nchromosomes_units = 100000"
+        + "\nchromosomes = " + chrs
+//        + "\nchromosomes_display_default = yes"
+//        + "\nchromosomes_scale = "+ name + ":" + scale
+        + "\nchromosomes_color = /" + stripPunc(kname) + "/=grey;/obj/=orange;"+detailedColor
+        + "\nchromosomes_radius = "+ detailedRadius
+        + "\n<<include ../" + kname + ".ideogram.conf>>"
+        + "\n<<include ../" + kname + ".ticks.conf>>"
+        + "\n<plots>"
+        + "\n<plot>"
+        + "\ntype = text"
+        + "\ncolor = black"
+        + "\nfile = ../" + kname + "." + name + ".labels"
+        + "\nr0 = 1r+10p"
+        + "\nr1 = 1r+200p"
+        + "\nshow_links     = no"
+//        + "\nlink_dims      = 4p,4p,8p,4p,4p"
+//        + "\nlink_thickness = 1p"
+//        + "\nlink_color     = grey"
+        + "\nlabel_size   = 0p"
+        + "\nlabel_font   = condensed"
+        + "\npadding  = 0p"
+        + "\nrpadding = 0p"
+        + "\n<rules>"
+        + detailedLabel
+        + "\n</rules>"
+        + "\n</plot>"
+        + "\n</plots>"
+        + "\n<image>"
+        + "\nfile  = ../" + kname + "." + name + "-detail.svg"
+        + "\n<<include ../image.conf>>"
+        + "\n</image>"
+        + "\n<<include ../housekeeping.conf>>"
+        + "\n<links>"
+        + "\nz = 0"
+        + "\nradius = 0.95r"
+        + "\nbezier_radius = 0r"
+        + "\nbezier_radius_purity = 1"
+        + "\n<link scope"+name+">"
+        + "\nshow = yes"
+        + "\ncolor = ribboncolor"
+        + "\nstroke_thickness = 2"
+        + "\nstroke_color = blue"
+        + "\nfile  = ../" + kname + "." + name + ".links"
+        + "\nribbon = yes"
+        + "\nflat = yes"
+        + "\n</link>"
+        + "\n</links>"
+        + "\n<zooms>"
+        + detailedZoom
+        + "\n</zooms>"
+}
+
+public function compileHook (s:String)
+{
+    var t0 = new Date;
+    var maker = new SwfMaker ();
+    var bytes = ESC::compileStringToBytes (s);
+    var bytes = maker.makeSwf ([bytes], null);
+    print (bytes.length + " bytes in " + (new Date() - t0) + " ms");
+    return bytes;
+}
+
+
+
+// chr - CHRNAME CHRLABEL START END COLOR
+//      "       method#  0 size "
+
+function karyoFromAbc(fname, abc) {
+    var chr_count = 1;
+    var ticket = 1;
+    var out_str = "";
+    var code_size = 0;
+    var kname = fname.substring(fname.lastIndexOf("/")+1, fname.lastIndexOf("."));
+    var start;
+    var end = 0;
+
+    for each (body in abc.bodies) {
+        var band_str = "";
+        /*
+        for each (insn in body.code) {            
+            var bandlabel = ticket++;
+            var bandname = "b"+bandlabel;
+            start = end;
+            end = end + body.code.length;
+            var color = ticket % 2 ? "grey" : "black";
+            band_str += "\nband";
+            band_str += " " + chrname;
+            band_str += " " + bandname;
+            band_str += " " + bandlabel;
+            band_str += " " + start;
+            band_str += " " + end;
+            band_str += " " + color;
+        }
+        */
+
+        var chr_str = "";
+        var chrlabel = chr_count++;
+        var chrname = kname+"_"+chrlabel;
+        var start = 0;
+        var end = body.code.length; //end = end + body.code.length;
+        var color = "spectral-5-div-"+(chr_count%5+1);
+        chr_str += "\nchr -";
+        chr_str += " " + chrname;
+        chr_str += " " + chrname;
+        chr_str += " " + start;
+        chr_str += " " + end;
+        chr_str += " " + color;
+
+        out_str += "\n" + chr_str + band_str;
+    }
+    return out_str;
+}
