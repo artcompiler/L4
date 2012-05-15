@@ -206,96 +206,33 @@ function popName() {
     var kname = fname.substring(fname.lastIndexOf("/")+1);
     var sharedLabelStr = ""
     var closureMap = { }
-    var tableMap = { }
+    var nodeMap = { }
 
     var linkStr = ""
     var nodesStr = ""
 
     for each (var closure in src.bods) {
         closure.id = genClosureName()
-        closureMap[closure.name] = closure
+        closureMap[closure.id] = closure
         //print("bods closure.id="+closure.id+" closure.name="+closure.name)
+        // init map from expr to closure
+        for each (let expr in closure.blocks[0].exprs) {
+            print("expr.id="+expr.id)
+            let id = expr.id
+            expr.name = genExprName()
+            if (!nodeMap[id]) {
+                nodeMap[id] = [ ]
+            }
+            nodeMap[id].push(closure.id)
+        }
     }
 
     for each (let node in src.pool) {
         node.name = genNodeName()
     }
 
-/*
-    for each (var obj in src.objs) {
-        obj.id = genTableName()
-        tableMap[obj.name] = obj
-    }
 
-    for each (var table in tableMap) {
-        configStr = "";
-        detailedConfigStr = "";
-        linkStr = "";
-
-        var tableSize = table.slots.length;
-
-        nodesStr += emitNodes({id: table.id, tokens: table.tokens});
-
-        var offset = 1;
-        var labelStr = sharedLabelStr;
-        var others = []
-
-        for each (var slot in table.slots) {
-
-            slot.id = genSlotName()
-
-            print("table.id="+table.id+" slot.id="+slot.id)
-
-            var env = {
-                id: slot.id,
-                offset: offset,    // for link
-                size: 100000,
-                name: table.name,
-                label: slot.name,
-                tokens: slot.tokens,
-                closures: closureMap,
-                tables: tableMap,
-                slot: slot
-            }
-
-            karyotypeStr += emitChr(env)
-            nodesStr += emitNodes({id: slot.id, tokens: slot.tokens});
-            labelStr = emitLabel(env, labelStr);
-            linkStr = emitLink(linkStr, env);
-            offset++;
-
-        }
-
-        let size = (tableSize?tableSize:tableSize+1)*100000
-        var env = {
-            kname: kname,
-            id: table.id,
-            name: table.name,
-            label: table.alias,
-            offset: 0,
-            offset: size/2,    // for label
-            scale: 2,
-            size: size,
-            tables: tableMap,
-            closures: closureMap
-        }
-
-
-        labelStr = emitLabel(env, labelStr);
-        karyotypeStr += emitChr(env)
-        configStr += emitConfig(env)
-        detailedConfigStr += emitDetailedConfig(env)
-
-        var rootName = fname+"."+table.id
-        Util::writeStringToFile(linkStr,rootName+".links");
-        Util::writeStringToFile(labelStr,rootName+".labels");
-        Util::writeStringToFile(configStr,rootName+".conf");
-        Util::writeStringToFile(detailedConfigStr,rootName+"-detail.conf");
-
-    }
-*/
-
-    let nodeIdeoSize    = 10000
+    let nodeIdeoSize    = 100000
     let closureIdeoSize = 100000
     let linkWidth = 10000
 
@@ -304,8 +241,9 @@ function popName() {
         configStr = "";
         detailedConfigStr = "";
         linkStr = "";
+        var rootName = fname+"."+node.name
 
-        var nodeSize = node.length
+        var nodeSize = getNodeSize(node)  // only count kids
 
         nodesStr += emitNodes({id: node.name, tokens: node.tokens});
 
@@ -314,30 +252,30 @@ function popName() {
         var others = []
 
         let count = 0
-        for (let i=0; i < node.length; i++) {  // skip the last slot
+        for (let i=1; i < node.length; i++) {  // skip the first slot
             let slot = node[i]
-            let slotId = node.name + "-" + count++
-            let slotName = slot is String ? slot 
-                : slot is Number ? "N"+(slot+1)
-                : slotId
-            let env = {
-                id: slotId,
-                name: slotName,
-                offset: nodeIdeoSize/2,    // for label
-                size: nodeIdeoSize,
-                label: slotName
+            if (slot is int) {
+                let slotId = node.name + "-" + count++
+                let slotName = slot is String ? slot 
+                    : slot is Number ? "N"+(slot+1)
+                    : slotId
+                let env = {
+                    id: slotId,
+                    name: slotName,
+                    offset: nodeIdeoSize/2,    // for label
+                    size: nodeIdeoSize,
+                    label: slotName
+                }
+                karyotypeStr += emitChr(env)
+                //nodesStr += emitNodes({id: slotId, tokens: slot.tokens});
+                //linkStr = emitLink(env, linkStr);
+                labelStr = emitLabel({id: slotId, size: nodeIdeoSize}, labelStr);
+                offset++;   
             }
-
-            karyotypeStr += emitChr(env)
-            //nodesStr += emitNodes({id: slotId, tokens: slot.tokens});
-            //linkStr = emitLink(env, linkStr);
-            labelStr = emitLabel(env, labelStr);
-            
-            offset++;
 
         }
 
-        let size = (nodeSize?nodeSize:nodeSize+1)*nodeIdeoSize
+        let size = nodeSize*nodeIdeoSize
         var env = {
             kname: kname,
             id: node.name,
@@ -345,109 +283,42 @@ function popName() {
             label: node[0],
             offset: 0,
             offset: size/2,    // for label
-            scale: 2,
+            scale: 20,
             size: size,
             nodes: src.pool,
-            tables: tableMap,
             closures: closureMap
         }
 
 
-        labelStr = emitLabel(env, labelStr);
-        linkStr = emitNodeLink({id: nid, pool: src.pool, linkWidth: linkWidth}, linkStr);
+        labelStr = emitLabel({id: node.name, size: size}, labelStr);
+        [linkStr, labelStr] = emitNodeLink({id: nid, pool: src.pool, linkWidth: linkWidth, incoming: true}, linkStr, labelStr);
         karyotypeStr += emitChr(env)
-        configStr += emitConfig(env)
-        detailedConfigStr += emitDetailedConfig(env)
+        configStr += emitConfig(env, linkStr)
+        detailedConfigStr += emitClosureOrNodeConfig(env, linkStr)
 
-        var rootName = fname+"."+node.name
         Util::writeStringToFile(linkStr,rootName+".links");
         Util::writeStringToFile(labelStr,rootName+".labels");
         Util::writeStringToFile(configStr,rootName+".conf");
+        print("rootName="+rootName)
         Util::writeStringToFile(detailedConfigStr,rootName+"-detail.conf");
 
     }
 
     for each (var closure in closureMap) {
-        print("closure="+typeof closure)
-        configStr = "";
-        detailedConfigStr = "";
-        linkStr = "";
+        //print("closure="+typeof closure)
+        configStr = ""
+        detailedConfigStr = ""
+        linkStr = ""
 
-        var closureSize = closure.slots.length + closure.blocks[0].exprs.length;
+        var closureSize = closure.blocks[0].exprs.length;
 
         nodesStr += emitNodes({id: closure.id, tokens: closure.tokens});
 
         var offset = 1;
         var labelStr = sharedLabelStr;
         var others = []
+        var rootName = fname+"."+closure.id
 
-        /*
-        for each (var slot in closure.slots) {
-
-            slot.id = genSlotName()
-
-            print("closure.id="+closure.id+" slot.id="+slot.id)
-
-            var env = {
-                id: slot.id,
-                name: slot.name,
-                offset: closureIdeoSize/2,    // for label
-                size: closureIdeoSize,
-                label: slot.name
-            }
-
-            karyotypeStr += emitChr(env)
-            nodesStr += emitNodes({id: slot.id, tokens: slot.tokens});
-            labelStr = emitLabel(env, labelStr);
-            
-            offset++;
-
-        }
-        */
-
-        /*
-        for each (var ref in closure.blocks[0].refs) {
-
-            ref.id = genRefName()
-
-            print("closure.id="+closure.id+" ref.id="+ref.id)
-
-            var env = {
-                id: ref.id,
-                name: ref.name,
-                offset: 50000,    // for label
-                size: 100000,
-                label: ref.name
-            }
-
-            karyotypeStr += emitChr(env)
-            nodesStr += emitNodes({id: ref.id, tokens: ref.tokens});
-            labelStr = emitLabel(env, labelStr);
-            
-            offset++;
-
-        }
-        */
-
-        for each (var expr in closure.blocks[0].exprs.reverse()) {
-
-            expr.name = genExprName()
-
-            var env = {
-                id: expr.name,
-                name: expr.name,
-                offset: closureIdeoSize/2,    // for label
-                size: closureIdeoSize,
-                label: expr.name
-            }
-
-            karyotypeStr += emitChr(env)
-            nodesStr += emitNodes({id: expr.name, tokens: expr.tokens});
-            labelStr = emitLabel(env, labelStr);
-            
-            offset++;
-
-        }
 
         let size = (closureSize?closureSize:closureSize+1)*closureIdeoSize
         var env = {
@@ -457,24 +328,60 @@ function popName() {
             label: closure.alias,
             offset: 0,
             offset: size/2,    // for label
-            scale: 2,
+            scale: 20,
             size: size,
-            tables: tableMap,
             closures: closureMap,
-            nodes: src.pool
+            nodes: src.pool,
+            path: [closure.id]
         }
 
-
-        linkStr = emitExprLinks({id: closure.id, exprs: closure.blocks[0].exprs, pool: src.pool, linkWidth: linkWidth}, linkStr);
         labelStr = emitLabel(env, labelStr);
+        [linkStr, labelStr] = emitExprLinks({id: closure.id, exprs: closure.blocks[0].exprs, pool: src.pool, linkWidth: linkWidth}, linkStr, labelStr);
         karyotypeStr += emitChr(env)
-        configStr += emitConfig(env)
-        detailedConfigStr += emitDetailedConfig(env)
+        configStr += emitConfig(env, linkStr)
+        detailedConfigStr += emitClosureOrNodeConfig(env, linkStr)
 
-        print("closure="+typeof closure)
-        print("closure.id="+closure.id);
 
-        var rootName = fname+"."+closure.id
+        for each (var expr in closure.blocks[0].exprs.reverse()) {
+
+            let detailedExprConfigStr = exprLinkStr = ""
+            let exprId = expr.name
+
+            var env = {
+                kname: kname,
+                id: exprId,
+                name: exprId,
+                offset: closureIdeoSize/2,    // for label
+                size: closureIdeoSize,
+                label: exprId,
+                path: [closure.id, expr.name],
+                closures: closureMap,
+                nodes: src.pool,
+                scale: 20,
+                path: [closure.id, exprId]
+            }
+
+            karyotypeStr += emitChr(env)
+            nodesStr += emitNodes({id: exprId, tokens: expr.tokens});
+            labelStr = emitLabel(env, labelStr);
+
+            nodesStr += emitNodes({id: exprId, tokens: expr.tokens});
+            labelStr = emitLabel(env, labelStr);
+
+            [exprLinkStr, labelStr] = emitExprLink({id: closure.id, expr: expr, pool: src.pool, linkWidth: linkWidth}, exprLinkStr, labelStr);
+            Util::writeStringToFile(exprLinkStr,rootName+"-"+exprId+".links");
+
+
+            detailedExprConfigStr += emitExprConfig(env, linkStr)
+            Util::writeStringToFile(detailedExprConfigStr,rootName+"-"+exprId+"-detail.conf");
+
+            offset++;
+
+        }
+
+        //print("closure="+typeof closure)
+        //print("closure.id="+closure.id);
+
         Util::writeStringToFile(linkStr,rootName+".links");
         Util::writeStringToFile(labelStr,rootName+".labels");
         Util::writeStringToFile(configStr,rootName+".conf");
@@ -503,57 +410,156 @@ function emitNodes({id, tokens}, str) {
 }
 
 
+function emitNodeLink({pool, id, linkWidth, incoming}, linkStr, labelStr) {
 
-function emitNodeLink({pool, id, linkWidth}, linkStr) {
-
-    print("emitNodeLink() id="+id);
     let from = pool[id]
-    let outerWidth = from.length*nodeIdeoSize
-    let outerSize = linkWidth
-    let outerOffset = outerWidth / 2 - linkWidth / 2
-    let outerId = "N" + (id+1)
 
     if (!from) {
-        return linkStr
+        return [linkStr, labelStr]
     }
 
-    let to
-    for (let i=0; i< from.length; i++) {
-        if (from[i] is Number) {
-            to = pool[from[i]]
+    let outerWidth = getNodeSize(from)*nodeIdeoSize
+    let outerSize = linkWidth
+    let outerOffset = outerWidth / 2 - linkWidth / 2
+    let outerId = getOuterId(id)
 
+    let count = 0;
+    // do outgoing links
+    for (let i=0; i< from.length; i++) {
+        if (from[i] is int) {
+
+            let to = pool[from[i]]
             if (!to) {
                 continue
             }
 
-            let fromId = "N" + (id+1)
-            let fromOffset = nodeIdeoSize / 2 - linkWidth / 2
+            let outerLinkId = getLinkId(id, i, 0)
+            let linkId = getLinkId(id, i, from[i]+1)
+
+            let fromId = getFromId(id, count++)
+            let fromWidth = nodeIdeoSize
+            let fromOffset = fromWidth / 2 - linkWidth / 2
             let fromSize = linkWidth
-            let toId = "N" + (from[i]+1)
-            let toWidth = (to.length===0?1:to.length)*nodeIdeoSize
+
+            let toId = getToId(from[i])
+            let toWidth = getNodeSize(to)*nodeIdeoSize   //(to.length===0?1:to.length)*nodeIdeoSize
             let toOffset = toWidth / 2 - linkWidth / 2
             let toSize = linkWidth
 
-            linkStr += fromId + "_" + i + " " + outerId + " " + outerOffset + " " + (outerOffset+outerSize) + "\n" +
-                       fromId + "_" + i + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
+            linkStr += outerLinkId + " " + outerId + " " + outerOffset + " " + (outerOffset+outerSize) + "\n" +
+                       outerLinkId + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
 
-            linkStr += fromId + "_" + i + "_" + from[i] + " " + fromId + "-" + i + " " + fromOffset + " " + (fromOffset+fromSize) + "\n" +
-                       fromId + "_" + i + "_" + from[i] + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
+            linkStr += linkId + " " + fromId + " " + fromOffset + " " + (fromOffset+fromSize) + "\n" +
+                       linkId + " " + toId + " " + toOffset + " " + (toOffset+toSize)  + "\n";
 
-            linkStr = emitNodeLink({pool: pool, id: from[i], linkWidth: linkWidth}, linkStr)
+            if (labelStr.indexOf(toId+" ") < 0) {
+                labelStr += toId + " " + (toWidth / 2) + " " + (toWidth / 2) + " " + toId + "\n"
+            }
+
+            [linkStr, labelStr] = emitNodeLink({pool: pool, id: from[i], linkWidth: linkWidth, incoming: false}, linkStr, labelStr)
         }
     }
 
-    return linkStr
+    // do incoming links
+    let nodeLinks = nodeMap[id]
+    if (incoming && nodeLinks) {
+        for (let i=0; i< nodeLinks.length; i++) {
+
+            let outerLinkId = getLinkId(id, i, 0)
+            let linkId = getLinkId(id, i, i+1)
+            
+            let fromId = getFromId(id, 0)   // FIXME only links the first child of a node
+            let fromWidth = nodeIdeoSize
+            let fromOffset = fromWidth / 2 - linkWidth / 2
+            let fromSize = linkWidth
+
+            let toId = nodeLinks[i]
+            let toClosure = closureMap[toId]
+            let toWidth = getClosureSize(toClosure)*nodeIdeoSize   //(to.length===0?1:to.length)*nodeIdeoSize
+            let toOffset = toWidth / 2 - linkWidth / 2
+            let toSize = linkWidth
+
+            linkStr += outerLinkId + " " + outerId + " " + outerOffset + " " + (outerOffset+outerSize) + " color=incomingcolor\n" +
+                outerLinkId + " " + toId + " " + toOffset + " " + (toOffset+toSize) + " color=incomingcolor\n";
+            
+            linkStr += linkId + " " + fromId + " " + fromOffset + " " + (fromOffset+fromSize) + " color=incomingcolor\n" +
+                linkId + " " + toId + " " + toOffset + " " + (toOffset+toSize) + " color=incomingcolor\n";
+
+            if (labelStr.indexOf(toId+" ") < 0) {
+                labelStr += toId + " " + (toWidth / 2) + " " + (toWidth / 2) + " " + toId + "\n"
+            }
+
+            [linkStr, labelStr] = emitNodeLink({pool: pool, id: from[i], linkWidth: linkWidth, incoming: false}, linkStr, labelStr)
+        }
+    }
+
+    return [linkStr, labelStr]
+
+    function getLinkId(x, y, z) {
+        return "N" + (x+1) + "_" + y + "_" + z
+    }
+
+    function getFromId(n, i) {
+        return "N" + (n+1) + "-" + i
+    }
+
+    function getToId(n) {
+        return "N" + (n+1)
+    }
+
+    function getOuterId(n) {
+        return "N" + (n+1)
+    }
+
 }
 
-function emitExprLinks({id:outerId, exprs, pool, linkWidth}, linkStr) {
+function getNodeSize(node) {
+    let count = 0
+    for each (let n in node) {
+        if (n is int) {
+            count++
+        }
+    }
+    return count?count:1
+}
 
-    let outerOffset = exprs.length * closureIdeoSize / 2 - linkWidth / 2 
-    let outerSize = linkWidth
-    let to
+function getClosureSize(closure) {
+    return closure?closure.blocks[0].exprs.length:1
+}
+
+function emitExprLink({id:outerId, expr, pool, linkWidth}, linkStr, labelStr) {
+
+    let to = pool[expr.id]
+
+    let fromId = expr.name
+    let fromWidth = closureIdeoSize
+    let fromOffset = 0
+    let fromSize = fromWidth
+    let toId = "N" + (expr.id+1)
+    let toWidth = getNodeSize(to)*nodeIdeoSize
+    let toOffset = toWidth / 2 - linkWidth / 2
+    let toSize = linkWidth
+
+    linkStr += outerId + "_" + fromId + "_" + i + " " + fromId + " " + fromOffset + " " + (fromOffset+fromSize) + "\n" +
+               outerId + "_" + fromId + "_" + i + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
+
+    if (labelStr.indexOf(toId+" ") < 0) {
+        labelStr += toId + " " + (toWidth / 2) + " " + (toWidth / 2) + " " + toId + "\n"
+    }
+
+    [linkStr, labelStr] = emitNodeLink({pool: pool, id: expr.id, linkWidth: linkWidth, incoming: false}, linkStr, labelStr)
+
+    return [linkStr, labelStr]
+}
+
+function emitExprLinks({id:outerId, exprs, pool, linkWidth}, linkStr, labelStr) {
+
+    let outerWidth = exprs.length * closureIdeoSize 
+    let outerOffset = 0
+    let outerSize = outerWidth
+
     for (let i=0; i< exprs.length; i++) {
-        to = pool[exprs[i].id]
+        let to = pool[exprs[i].id]
 
         if (!to) {
             continue
@@ -561,10 +567,10 @@ function emitExprLinks({id:outerId, exprs, pool, linkWidth}, linkStr) {
 
         let fromId = exprs[i].name
         let fromWidth = closureIdeoSize
-        let fromOffset = fromWidth / 2 - linkWidth / 2
-        let fromSize = linkWidth
+        let fromOffset = 0
+        let fromSize = fromWidth
         let toId = "N" + (exprs[i].id+1)
-        let toWidth = (to.length===0?1:to.length)*nodeIdeoSize
+        let toWidth = getNodeSize(to)*nodeIdeoSize
         let toOffset = toWidth / 2 - linkWidth / 2
         let toSize = linkWidth
 
@@ -574,55 +580,24 @@ function emitExprLinks({id:outerId, exprs, pool, linkWidth}, linkStr) {
         linkStr += outerId + "_" + fromId + "_" + i + " " + fromId + " " + fromOffset + " " + (fromOffset+fromSize) + "\n" +
                    outerId + "_" + fromId + "_" + i + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
 
+
+        if (labelStr.indexOf(toId+" ") < 0) {
+            labelStr += toId + " " + (toWidth / 2) + " " + (toWidth / 2) + " " + toId + "\n"
+        }
+
+        [linkStr, labelStr] = emitNodeLink({pool: pool, id: exprs[i].id, linkWidth: linkWidth, incoming: false}, linkStr, labelStr)
     }
 
-    return linkStr
-}
-
-function emitLink({name, label, offset, toName, toOffset, toSize, closures, tables, slot}, linkStr) {
-
-    let from
-    if (closures[name]) {
-        from = closures[name]
-    }
-    else if (tables[name]) {
-        from = tables[name]
-    }
-
-
-    if (!from) {
-        return linkStr
-    }
-    let to
-    if (closures[slot.val]) {
-        to = closures[slot.val]
-    }
-    else if (tables[slot.val]) {
-        to = tables[slot.val]
-    }
-    if (!to) {
-        return linkStr
-    }
-
-    let fromId = slot.id
-    let fromOffset = 0 //offset
-    let fromSize = closureIdeoSize
-    let toId = to.id
-    let toOffset = 0
-    let toSize = (to.slots.length===0?1:to.slots.length)*closureIdeoSize
-
-    return linkStr + fromId + "_" + offset + " " + fromId + " " + fromOffset + " " + (fromOffset+fromSize) + "\n" +
-           fromId + "_" + offset + " " + toId + " " + toOffset + " " + (toOffset+toSize) + "\n";
+    return [linkStr, labelStr]
 }
 
 function emitChr({id, label, size}) {
     return "chr - " + id + " " + id + " 0 " + size + " gpos25\n";
 }
 
-function emitLabel({id, size, label}, out) {
+function emitLabel({id, size}, out) {
     let offset = size/2
-    var label = label.replace(/ /g, "__");
-    var str = id + " " + offset + " " + offset + " " + label + "\n";
+    var str = id + " " + offset + " " + offset + " " + id + "\n";
     if (out.indexOf(str) < 0) {
         out += str
     }
@@ -630,7 +605,7 @@ function emitLabel({id, size, label}, out) {
 }
 
 // Emit a Circos conf file for each body
-function emitConfig({kname, name, id, scale, closures, tables, nodes}) {
+function emitConfig({kname, name, id, scale, closures, tables, nodes}, linkStr) {
     var chrs = ""
     var radius = ""
     var color = ""
@@ -642,21 +617,14 @@ function emitConfig({kname, name, id, scale, closures, tables, nodes}) {
         chrs += closures[closureName].id
     }
 
-/*
-    for (let tableName in tables) {
-        if (chrs.length > 0) {
-            chrs += ";"
-        }
-        chrs += tables[tableName].id
-    }
-*/
-
     for each (let node in nodes) {
+        //print("emitConfig() node.name="+node.name)
+
+        let nodeName = node.name
         if (chrs.length > 0) {
             chrs += ";"
         }
-        print("emitConfig() node.name="+node.name)
-        chrs += node.name
+        chrs += nodeName
     }
 
 
@@ -679,7 +647,8 @@ function emitConfig({kname, name, id, scale, closures, tables, nodes}) {
 //        + "\nlink_dims      = 4p,4p,8p,4p,4p"
 //        + "\nlink_thickness = 1p"
 //        + "\nlink_color     = grey"
-        + "\nlabel_size   = 0p"
+        + "\nlabel_size   = 10p"
+        + "\nlabel_color = grey"
         + "\nlabel_font   = condensed"
         + "\npadding  = 0p"
         + "\nrpadding = 0p"
@@ -699,25 +668,34 @@ function emitConfig({kname, name, id, scale, closures, tables, nodes}) {
         + "\n<<include ../image.conf>>"
         + "\n</image>"
         + "\n<<include ../housekeeping.conf>>"
+
         + "\n<links>"
         + "\nz = 0"
         + "\nradius = 0.95r"
         + "\nbezier_radius = 0r"
-        + "\nbezier_radius_purity = 1"
+        + "\nbezier_radius_purity = 0.8"
         + "\n<link "+id+">"
         + "\nshow = yes"
         + "\ncolor = ribboncolor"
+//        + "\nthickness = 1p"
         + "\nstroke_thickness = 1"
-        + "\nstroke_color = ribboncolor"
+        + "\nstroke_color = ribbonborder"
         + "\nfile  = ../" + kname + "." + id + ".links"
         + "\nribbon = yes"
         + "\nflat = yes"
+        + "\n<rules>"
+        + "\n<rule>"
+        + "\nimportance = 100"
+        + "\ncondition  = 1"
+        + "\nz = eval( -1 * scalar max(_SIZE2_,_SIZE1_) )"
+        + "\n</rule>"
+        + "\n</rules>"
         + "\n</link>"
         + "\n</links>"
 }
 
-// Emit a Circos conf file for each body detail
-function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tables, nodes}) {
+// Emit a Circos conf file for each closure or node detail
+function emitClosureOrNodeConfig({kname, id, name, scale, offset, size, closures, tables, nodes}, linkStr) {
 
     // show details of the current chr and hide details of the other chrs
 
@@ -728,12 +706,15 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
     var detailedZoom = ""
     var detailedLabel = ""
 
+    // for each closure, zoom into the expressions and nodes they depend on
+
     for (closureName in closures) {
 
         let closure = closures[closureName]
 
-        if (closureName != name) {
-            // if not the focus chr, then just add name to chrs
+        print("id="+id+" name="+name+" closureName="+closureName)
+
+        if (id != closureName) {
             if (chrs.length > 0) {
                 chrs += ";"
             }
@@ -757,126 +738,52 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
             
             detailedZoom += "\n <zoom>"
             detailedZoom += "\n chr = " + detailedChr
-            detailedZoom += "\n start = " + offset + "u"
-            detailedZoom += "\n end   = " + (offset+size-1) + "u"
+            detailedZoom += "\n start = 0u"
+            detailedZoom += "\n end   = " + (size-1) + "u"
             detailedZoom += "\n scale = " + scale
             detailedZoom += "\n </zoom>"
 
             detailedLabel += "\n <rule>"
             detailedLabel += "\n importance = 100"
             detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-            detailedLabel += "\n label_size = 10p"
+//            detailedLabel += "\n label_size = 10p"
             detailedLabel += "\n label_color = grey"
             detailedLabel += "\n link_color = white"
             detailedLabel += "\n </rule>"
         }
 
-        /*
-        if (closureName === name && closure.slots.length > 0) {
-            for each (var slot in closure.slots.reverse()) {  
+        if (id === closureName && closure.blocks[0].exprs.length > 0) {
+            for each (var expr in closure.blocks[0].exprs) {
                 if (chrs.length > 0) {
                     chrs += ";"
                 }
                 if (detailedRadius.length > 0) {
                     detailedRadius += ";"
-                    detailedColor += ";"
                 }
-                var detailedChr = slot.id  //chrName + "-" + stripPunc(slot.name)
-                
-                print("closure.id="+closures[closureName].id+" slot.id="+slot.id)
-                
-                chrs += detailedChr
-                detailedRadius += detailedChr + ":0.97r"
-                detailedColor += detailedChr + "=selectedcolor"
-                
-                detailedZoom += "\n <zoom>"
-                detailedZoom += "\n chr = " + detailedChr
-                detailedZoom += "\n start = " + offset + "u"
-                detailedZoom += "\n end   = " + (offset+size-1) + "u"
-                detailedZoom += "\n scale = " + scale
-                detailedZoom += "\n </zoom>"
-
-                detailedChr = detailedChr.replace("$", "\\\\$")
-
-                detailedLabel += "\n <rule>"
-                detailedLabel += "\n importance = 100"
-                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-                detailedLabel += "\n label_size = 10p"
-                detailedLabel += "\n label_color = grey"
-                detailedLabel += "\n link_color = white"
-                detailedLabel += "\n </rule>"
-            }
-        }
-        */
-        /*
-        if (closureName === name && closure.blocks[0].refs.length > 0) {
-            for each (var ref in closure.blocks[0].refs) {  
-                if (chrs.length > 0) {
-                    chrs += ";"
-                }
-                if (detailedRadius.length > 0) {
-                    detailedRadius += ";"
-                    detailedColor += ";"
-                }
-                var detailedChr = ref.id
-                
-                print("closure.id="+closures[closureName].id+" ref.id="+ref.id)
-                
-                chrs += detailedChr
-                detailedRadius += detailedChr + ":0.97r"
-                detailedColor += detailedChr + "=selectedcolor"
-                
-                detailedZoom += "\n <zoom>"
-                detailedZoom += "\n chr = " + detailedChr
-                detailedZoom += "\n start = " + offset + "u"
-                detailedZoom += "\n end   = " + (offset+size-1) + "u"
-                detailedZoom += "\n scale = " + scale
-                detailedZoom += "\n </zoom>"
-                
-                detailedChr = detailedChr.replace("$", "\\\\$")
-                
-                detailedLabel += "\n <rule>"
-                detailedLabel += "\n importance = 100"
-                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-                detailedLabel += "\n label_size = 14p"
-                detailedLabel += "\n label_color = grey"
-                detailedLabel += "\n link_color = white"
-                detailedLabel += "\n </rule>"
-            }
-        }
-        */
-
-        if (closureName === name && closure.blocks[0].exprs.length > 0) {
-            for each (var expr in closure.blocks[0].exprs) {  
-                if (chrs.length > 0) {
-                    chrs += ";"
-                }
-                if (detailedRadius.length > 0) {
-                    detailedRadius += ";"
+                if (detailedColor.length > 0) {
                     detailedColor += ";"
                 }
                 var detailedChr = expr.name
-                
+
                 chrs += detailedChr
                 detailedRadius += detailedChr + ":0.97r"
                 detailedColor += detailedChr + "=selectedcolor"
                 
                 detailedZoom += "\n <zoom>"
                 detailedZoom += "\n chr = " + detailedChr
-                detailedZoom += "\n start = " + offset + "u"
-                detailedZoom += "\n end   = " + (offset+size-1) + "u"
+                detailedZoom += "\n start = 0u"
+                detailedZoom += "\n end   = " + (nodeIdeoSize-1) + "u"
                 detailedZoom += "\n scale = " + scale
                 detailedZoom += "\n </zoom>"
-                
-                detailedChr = detailedChr.replace("$", "\\\\$")
                 
                 detailedLabel += "\n <rule>"
                 detailedLabel += "\n importance = 100"
                 detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-                detailedLabel += "\n label_size = 10p"
+//                detailedLabel += "\n label_size = 10p"
                 detailedLabel += "\n label_color = grey"
                 detailedLabel += "\n link_color = white"
                 detailedLabel += "\n </rule>"
+
             }
         }
 
@@ -884,15 +791,45 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
 
     for each (let node in nodes) {
         let nodeName = node.name
+        let nodeSize = getNodeSize(node)
+        let nodeWidth = nodeSize * nodeIdeoSize
 
         if (nodeName != name) {
-            // if not the focus chr, then just add name to chrs
+            // if not one of the linked nodes, then just add name to chrs
             if (chrs.length > 0) {
                 chrs += ";"
             }
             chrs += nodeName
+
+            // show label for linked nodes
+            if (!(linkStr.indexOf(nodeName+" ") < 0)) {
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                }
+                if (detailedColor.length > 0) {
+                    detailedColor += ";"
+                }
+                var detailedChr = nodeName
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=tablecolor"
+                
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = 0u"
+                detailedZoom += "\n end   = " + (nodeWidth-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+                
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+//                detailedLabel += "\n label_size = 10p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+            }
         }
-        else if (node.length === 1) {
+        else if (nodeSize === 1) {
             // if the focus chr, but no slots, then just add name
             if (chrs.length > 0) {
                 chrs += ";"
@@ -909,133 +846,60 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
             
             detailedZoom += "\n <zoom>"
             detailedZoom += "\n chr = " + detailedChr
-            detailedZoom += "\n start = " + offset + "u"
-            detailedZoom += "\n end   = " + (offset+size-1) + "u"
+            detailedZoom += "\n start = 0u"
+            detailedZoom += "\n end   = " + (nodeWidth-1) + "u"
             detailedZoom += "\n scale = " + scale
             detailedZoom += "\n </zoom>"
 
             detailedLabel += "\n <rule>"
             detailedLabel += "\n importance = 100"
             detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-            detailedLabel += "\n label_size = 10p"
+//            detailedLabel += "\n label_size = 10p"
             detailedLabel += "\n label_color = grey"
             detailedLabel += "\n link_color = white"
             detailedLabel += "\n </rule>"
         }
         else {
             // otherwise, include detailed chrs
-            for (let i = 0; i < node.length; i++) {
-                
-                if (chrs.length > 0) {
-                    chrs += ";"
+            let count = 0
+            for (let i = 1; i < node.length; i++) {  // start with 1 to skip node kind
+                if (node[i] is int) {
+                    if (chrs.length > 0) {
+                        chrs += ";"
+                    }
+                    if (detailedRadius.length > 0) {
+                        detailedRadius += ";"
+                        detailedColor += ";"
+                    }
+                    var detailedChr = nodeName+"-"+count++
+                    chrs += detailedChr
+                    detailedRadius += detailedChr + ":0.97r"
+                    detailedColor += detailedChr + "=selectedcolor"
+                    
+                    detailedZoom += "\n <zoom>"
+                    detailedZoom += "\n chr = " + detailedChr
+                    detailedZoom += "\n start = 0u"
+                    detailedZoom += "\n end   = " + (nodeIdeoSize-1) + "u"
+                    detailedZoom += "\n scale = " + scale
+                    detailedZoom += "\n </zoom>"
+                    
+                    detailedChr = detailedChr.replace("$", "\\\\$")
+                    
+                    detailedLabel += "\n <rule>"
+                    detailedLabel += "\n importance = 100"
+                    detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+                    //                detailedLabel += "\n label_size = 10p"
+                    detailedLabel += "\n label_color = grey"
+                    detailedLabel += "\n link_color = white"
+                    detailedLabel += "\n </rule>"
                 }
-                if (detailedRadius.length > 0) {
-                    detailedRadius += ";"
-                    detailedColor += ";"
-                }
-                var detailedChr = nodeName+"-"+i
-                chrs += detailedChr
-                detailedRadius += detailedChr + ":0.97r"
-                detailedColor += detailedChr + "=selectedcolor"
-
-                detailedZoom += "\n <zoom>"
-                detailedZoom += "\n chr = " + detailedChr
-                detailedZoom += "\n start = " + offset + "u"
-                detailedZoom += "\n end   = " + (offset+size-1) + "u"
-                detailedZoom += "\n scale = " + scale
-                detailedZoom += "\n </zoom>"
-
-                detailedChr = detailedChr.replace("$", "\\\\$")
-
-                detailedLabel += "\n <rule>"
-                detailedLabel += "\n importance = 100"
-                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-                detailedLabel += "\n label_size = 10p"
-                detailedLabel += "\n label_color = grey"
-                detailedLabel += "\n link_color = white"
-                detailedLabel += "\n </rule>"
             }
-
-        }
-
-    }
-
-    for (tableName in tables) {
-        let table = tables[tableName]
-        let tableId = table.id
-        if (tableName != name) {
-            // if not the focus chr, then just add name to chrs
-            if (chrs.length > 0) {
-                chrs += ";"
-            }
-            chrs += tableId
-        }
-        else if (tables[tableName].slots.length === 0) {
-            // if the focus chr, but no slots, then just add name
-            if (chrs.length > 0) {
-                chrs += ";"
-            }
-            chrs += tableId
-
-            if (detailedRadius.length > 0) {
-                detailedRadius += ";"
-                detailedColor += ";"
-            }
-            var detailedChr = tableId
-            detailedRadius += detailedChr + ":0.97r"
-            detailedColor += detailedChr + "=selectedcolor"
-            
-            detailedZoom += "\n <zoom>"
-            detailedZoom += "\n chr = " + detailedChr
-            detailedZoom += "\n start = " + offset + "u"
-            detailedZoom += "\n end   = " + (offset+size-1) + "u"
-            detailedZoom += "\n scale = " + scale
-            detailedZoom += "\n </zoom>"
-
-            detailedLabel += "\n <rule>"
-            detailedLabel += "\n importance = 100"
-            detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-            detailedLabel += "\n label_size = 10p"
-            detailedLabel += "\n label_color = grey"
-            detailedLabel += "\n link_color = white"
-            detailedLabel += "\n </rule>"
-        }
-        else {
-            // otherwise, include detailed chrs
-            for each (var slot in tables[tableName].slots /*.reverse()*/) {  
-                print("table.id="+table.id+" slot.id="+slot.id);
-                if (chrs.length > 0) {
-                    chrs += ";"
-                }
-                if (detailedRadius.length > 0) {
-                    detailedRadius += ";"
-                    detailedColor += ";"
-                }
-                var detailedChr = slot.id  //chrName + "-" + stripPunc(slot.name)
-                chrs += detailedChr
-                detailedRadius += detailedChr + ":0.97r"
-                detailedColor += detailedChr + "=selectedcolor"
-
-                detailedZoom += "\n <zoom>"
-                detailedZoom += "\n chr = " + detailedChr
-                detailedZoom += "\n start = " + offset + "u"
-                detailedZoom += "\n end   = " + (offset+size-1) + "u"
-                detailedZoom += "\n scale = " + scale
-                detailedZoom += "\n </zoom>"
-
-                detailedChr = detailedChr.replace("$", "\\\\$")
-
-                detailedLabel += "\n <rule>"
-                detailedLabel += "\n importance = 100"
-                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
-                detailedLabel += "\n label_size = 10p"
-                detailedLabel += "\n label_color = grey"
-                detailedLabel += "\n link_color = white"
-                detailedLabel += "\n </rule>"
-            }
-
         }
     }
+
+    let fileRoot = kname + "." + id
+
+    print("fileRoot="+fileRoot)
 
     return "karyotype = ../" + kname + ".karyotype"
         + "\nchromosomes_units = " + closureIdeoSize
@@ -1050,14 +914,15 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
         + "\n<plot>"
         + "\ntype = text"
         + "\ncolor = black"
-        + "\nfile = ../" + kname + "." + id + ".labels"
+        + "\nfile = ../" + fileRoot + ".labels"
         + "\nr0 = 1r+10p"
         + "\nr1 = 1r+200p"
         + "\nshow_links     = no"
 //        + "\nlink_dims      = 4p,4p,8p,4p,4p"
 //        + "\nlink_thickness = 1p"
 //        + "\nlink_color     = grey"
-        + "\nlabel_size   = 0p"
+        + "\nlabel_size   = 10p"
+        + "\nlabel_color = grey"
         + "\nlabel_font   = condensed"
         + "\npadding  = 0p"
         + "\nrpadding = 0p"
@@ -1067,7 +932,7 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
         + "\n</plot>"
         + "\n</plots>"
         + "\n<image>"
-        + "\nfile  = ../" + kname + "." + id + "-detail.svg"
+        + "\nfile  = ../" + fileRoot + "-detail.svg"
         + "\n<<include ../image.conf>>"
         + "\n</image>"
         + "\n<<include ../housekeeping.conf>>"
@@ -1075,15 +940,297 @@ function emitDetailedConfig({kname, id, name, scale, offset, size, closures, tab
         + "\nz = 0"
         + "\nradius = 0.95r"
         + "\nbezier_radius = 0r"
-        + "\nbezier_radius_purity = 1"
+        + "\nbezier_radius_purity = 0.8"
         + "\n<link "+id+">"
         + "\nshow = yes"
         + "\ncolor = ribboncolor"
+//        + "\nthickness = 1p"
         + "\nstroke_thickness = 1"
-        + "\nstroke_color = ribboncolor"
-        + "\nfile  = ../" + kname + "." + id + ".links"
+        + "\nstroke_color = ribbonborder"
+        + "\nfile  = ../" + fileRoot + ".links"
         + "\nribbon = yes"
         + "\nflat = yes"
+        + "\n<rules>"
+        + "\n<rule>"
+        + "\nimportance = 100"
+        + "\ncondition  = 1"
+        + "\nz = eval( -1 * scalar max(_SIZE2_,_SIZE1_) )"
+        + "\n</rule>"
+        + "\n</rules>"
+        + "\n</link>"
+        + "\n</links>"
+        + "\n<zooms>"
+        + detailedZoom
+        + "\n</zooms>"
+}
+
+// Emit a Circos conf file for each body detail
+function emitExprConfig({kname, id, name, scale, offset, size, closures, tables, nodes, path}, linkStr) {
+
+    // show details of the current chr and hide details of the other chrs
+
+    var chrs = ""
+
+    var detailedRadius = ""
+    var detailedColor = ""
+    var detailedZoom = ""
+    var detailedLabel = ""
+
+    // for each closure, zoom into the expressions and nodes they depend on
+
+    for (closureName in closures) {
+
+
+        let closure = closures[closureName]
+
+        if (path.indexOf(closureName) < 0) {
+            if (chrs.length > 0) {
+                chrs += ";"
+            }
+            chrs += closure.id
+        }
+        else if (closure.slots.length === 0 &&
+                 closure.blocks[0].refs.length === 0) {
+            // if the focus chr, but no slots, then just add name
+            if (chrs.length > 0) {
+                chrs += ";"
+            }
+            chrs += closures[closureName].id
+
+            if (detailedRadius.length > 0) {
+                detailedRadius += ";"
+                detailedColor += ";"
+            }
+            var detailedChr = closures[closureName].id
+            detailedRadius += detailedChr + ":0.97r"
+            detailedColor += detailedChr + "=selectedcolor"
+            
+            detailedZoom += "\n <zoom>"
+            detailedZoom += "\n chr = " + detailedChr
+            detailedZoom += "\n start = 0u"
+            detailedZoom += "\n end   = " + (size-1) + "u"
+            detailedZoom += "\n scale = " + scale
+            detailedZoom += "\n </zoom>"
+
+            detailedLabel += "\n <rule>"
+            detailedLabel += "\n importance = 100"
+            detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+//            detailedLabel += "\n label_size = 10p"
+            detailedLabel += "\n label_color = grey"
+            detailedLabel += "\n link_color = white"
+            detailedLabel += "\n </rule>"
+        }
+
+        if (path.indexOf(closureName) >= 0 && closure.blocks[0].exprs.length > 0) {
+            for each (var expr in closure.blocks[0].exprs) {
+                if (chrs.length > 0) {
+                    chrs += ";"
+                }
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                }
+                if (detailedColor.length > 0) {
+                    detailedColor += ";"
+                }
+                var detailedChr = expr.name
+
+                chrs += detailedChr
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=selectedcolor"
+                
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = 0u"
+                detailedZoom += "\n end   = " + (nodeIdeoSize-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+                
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+//                detailedLabel += "\n label_size = 10p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+
+            }
+        }
+
+    }
+
+    print("path="+path+" chrs="+chrs)
+
+    for each (let node in nodes) {
+        let nodeName = node.name
+        let nodeSize = getNodeSize(node)
+        let nodeWidth = nodeSize * nodeIdeoSize
+
+        if (nodeName != name) {
+            // if not one of the linked nodes, then just add name to chrs
+            if (chrs.length > 0) {
+                chrs += ";"
+            }
+            chrs += nodeName
+
+
+            // show label for linked nodes
+            if (!(linkStr.indexOf(nodeName+" ") < 0)) {
+                if (detailedRadius.length > 0) {
+                    detailedRadius += ";"
+                }
+                if (detailedColor.length > 0) {
+                    detailedColor += ";"
+                }
+                var detailedChr = nodeName
+                detailedRadius += detailedChr + ":0.97r"
+                detailedColor += detailedChr + "=tablecolor"
+                
+                detailedZoom += "\n <zoom>"
+                detailedZoom += "\n chr = " + detailedChr
+                detailedZoom += "\n start = 0u"
+                detailedZoom += "\n end   = " + (nodeWidth-1) + "u"
+                detailedZoom += "\n scale = " + scale
+                detailedZoom += "\n </zoom>"
+                
+                detailedLabel += "\n <rule>"
+                detailedLabel += "\n importance = 100"
+                detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+//                detailedLabel += "\n label_size = 10p"
+                detailedLabel += "\n label_color = grey"
+                detailedLabel += "\n link_color = white"
+                detailedLabel += "\n </rule>"
+            }
+        }
+        else if (nodeSize === 1) {
+            // if the focus chr, but no slots, then just add name
+            if (chrs.length > 0) {
+                chrs += ";"
+            }
+            chrs += nodeName
+
+            if (detailedRadius.length > 0) {
+                detailedRadius += ";"
+                detailedColor += ";"
+            }
+            var detailedChr = nodeName
+            detailedRadius += detailedChr + ":0.97r"
+            detailedColor += detailedChr + "=selectedcolor"
+            
+            detailedZoom += "\n <zoom>"
+            detailedZoom += "\n chr = " + detailedChr
+            detailedZoom += "\n start = 0u"
+            detailedZoom += "\n end   = " + (nodeWidth-1) + "u"
+            detailedZoom += "\n scale = " + scale
+            detailedZoom += "\n </zoom>"
+
+            detailedLabel += "\n <rule>"
+            detailedLabel += "\n importance = 100"
+            detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+//            detailedLabel += "\n label_size = 10p"
+            detailedLabel += "\n label_color = grey"
+            detailedLabel += "\n link_color = white"
+            detailedLabel += "\n </rule>"
+        }
+        else {
+            // otherwise, include detailed chrs
+            let count = 0
+            for (let i = 1; i < node.length; i++) {  // start with 1 to skip node kind
+                if (node[i] is int) {
+                    if (chrs.length > 0) {
+                        chrs += ";"
+                    }
+                    if (detailedRadius.length > 0) {
+                        detailedRadius += ";"
+                        detailedColor += ";"
+                    }
+                    var detailedChr = nodeName+"-"+count++
+                    chrs += detailedChr
+                    detailedRadius += detailedChr + ":0.97r"
+                    detailedColor += detailedChr + "=selectedcolor"
+                    
+                    detailedZoom += "\n <zoom>"
+                    detailedZoom += "\n chr = " + detailedChr
+                    detailedZoom += "\n start = 0u"
+                    detailedZoom += "\n end   = " + (nodeIdeoSize-1) + "u"
+                    detailedZoom += "\n scale = " + scale
+                    detailedZoom += "\n </zoom>"
+                    
+                    detailedChr = detailedChr.replace("$", "\\\\$")
+                    
+                    detailedLabel += "\n <rule>"
+                    detailedLabel += "\n importance = 100"
+                    detailedLabel += "\n condition = eval( _CHR_ eq \"" + detailedChr + "\")"
+                    //                detailedLabel += "\n label_size = 10p"
+                    detailedLabel += "\n label_color = grey"
+                    detailedLabel += "\n link_color = white"
+                    detailedLabel += "\n </rule>"
+                }
+            }
+        }
+    }
+
+    let fileRoot = kname + "." + path[0]
+    let fileName = kname + "." + path[1]
+    //for (let i = 1; i < path.length; i++) {
+    //    fileName += "." + path[i]
+    //}
+
+    return "karyotype = ../" + kname + ".karyotype"
+        + "\nchromosomes_units = " + closureIdeoSize
+        + "\nchromosomes = " + chrs
+//        + "\nchromosomes_display_default = yes"
+//        + "\nchromosomes_scale = "+ id + ":" + scale
+        + "\nchromosomes_color = /C/=closurecolor;/N/=tablecolor;"+detailedColor
+        + "\nchromosomes_radius = "+ detailedRadius
+        + "\n<<include ../" + kname + ".ideogram.conf>>"
+        + "\n<<include ../" + kname + ".ticks.conf>>"
+        + "\n<plots>"
+        + "\n<plot>"
+        + "\ntype = text"
+        + "\ncolor = black"
+        + "\nfile = ../" + fileRoot + ".labels"
+        + "\nr0 = 1r+10p"
+        + "\nr1 = 1r+200p"
+        + "\nshow_links     = no"
+//        + "\nlink_dims      = 4p,4p,8p,4p,4p"
+//        + "\nlink_thickness = 1p"
+//        + "\nlink_color     = grey"
+        + "\nlabel_size   = 10p"
+        + "\nlabel_color = grey"
+        + "\nlabel_font   = condensed"
+        + "\npadding  = 0p"
+        + "\nrpadding = 0p"
+        + "\n<rules>"
+        + detailedLabel
+        + "\n</rules>"
+        + "\n</plot>"
+        + "\n</plots>"
+        + "\n<image>"
+        + "\nfile  = ../" + fileName + "-detail.svg"
+        + "\n<<include ../image.conf>>"
+        + "\n</image>"
+        + "\n<<include ../housekeeping.conf>>"
+        + "\n<links>"
+        + "\nz = 0"
+        + "\nradius = 0.95r"
+        + "\nbezier_radius = 0r"
+        + "\nbezier_radius_purity = 0.8"
+        + "\n<link "+id+">"
+        + "\nshow = yes"
+        + "\ncolor = ribboncolor"
+//        + "\nthickness = 1p"
+        + "\nstroke_thickness = 1"
+        + "\nstroke_color = ribbonborder"
+        + "\nfile  = ../" + fileRoot + "-" + path[1] + ".links"
+        + "\nribbon = yes"
+        + "\nflat = yes"
+        + "\n<rules>"
+        + "\n<rule>"
+        + "\nimportance = 100"
+        + "\ncondition  = 1"
+        + "\nz = eval( -1 * scalar max(_SIZE2_,_SIZE1_) )"
+        + "\n</rule>"
+        + "\n</rules>"
         + "\n</link>"
         + "\n</links>"
         + "\n<zooms>"
